@@ -1,0 +1,26 @@
+// MicroGrad - public C++ API
+// Forward declarations for the entire library.
+#pragma once
+
+#include "micrograd/dtype.hpp"
+#include "micrograd/shape.hpp"
+#include "micrograd/device.hpp"
+#include "micrograd/stream.hpp"
+#include "micrograd/storage.hpp"
+#include "micrograd/tensor.hpp"
+#include "micrograd/op.hpp"
+#include "micrograd/op_registry.hpp"
+#include "micrograd/ir.hpp"
+#include "micrograd/function.hpp"
+#include "micrograd/autograd.hpp"
+#include "micrograd/module.hpp"
+#include "micrograd/linear.hpp"
+#include "micrograd/sequential.hpp"
+#include "micrograd/relu.hpp"
+#include "micrograd/softmax.hpp"
+#include "micrograd/loss.hpp"
+#include "micrograd/optimizer.hpp"
+#include "micrograd/sgd.hpp"
+#include "micrograd/momentum.hpp"
+#include "micrograd/adam.hpp"
+#include "micrograd/serializer.hpp"
