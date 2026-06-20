@@ -27,12 +27,7 @@ def tensor(data, shape=None, dtype="float32", requires_grad=False):
 
 
 def _is_grad_enabled() -> bool:
-    # The C++ side exposes a thread-local Tracer; we model enable/disable via
-    # a simple Python flag plus the no_grad() ctx below.
-    return _grad_enabled
-
-
-_grad_enabled = True
+    return _C.is_grad_enabled()
 
 
 class _Ctx:
@@ -41,14 +36,12 @@ class _Ctx:
         self._prev = None
 
     def __enter__(self):
-        global _grad_enabled
-        self._prev = _grad_enabled
-        _grad_enabled = self.enabled
+        self._prev = _C.is_grad_enabled()
+        _C.set_grad_enabled(self.enabled)
         return self
 
     def __exit__(self, *args):
-        global _grad_enabled
-        _grad_enabled = self._prev
+        _C.set_grad_enabled(self._prev)
 
 
 def no_grad():

@@ -42,6 +42,8 @@ PyTorch-style libraries (see [Why MicroGrad?](#why-micrograd)).
 - [🛠️ Building from source](#-building-from-source)
 - [🧪 Running tests](#-running-tests)
 - [🐞 Debugging tips](#-debugging-tips)
+- [⚖️ Library Scope, Positives & Negatives](#-library-scope-positives--negatives)
+- [🔧 Engine Stability & Quick Fixes](#-engine-stability--quick-fixes)
 - [🗺️ Roadmap](#-roadmap)
 - [🤝 Contributing](#-contributing)
 - [📄 License](#-license)
@@ -54,17 +56,17 @@ PyTorch-style libraries (see [Why MicroGrad?](#why-micrograd)).
 | Area | What's in v0.1 |
 | --- | --- |
 | **Core** | C++17 tensor, autograd engine, captured IR graph, single-pass backward with topological release |
-| **Operators** | `+`, `-`, `*`, `/`, `**`, `@`, unary (`neg`, `exp`, `log`, `abs`, `relu`, `sigmoid`, `tanh`), reductions (`sum`, `mean`), 2-D `matmul` — each with autograd |
-| **Modules** | `Module`, `Linear`, `Sequential`, `ReLU`, `Softmax` |
+| **Operators** | `+`, `-`, `*`, `/`, `**`, `@`, unary (`neg`, `exp`, `log`, `abs`, `relu`, `sigmoid`, `tanh`), reductions (`sum`, `mean`), `softmax`, `conv2d`, 2-D `matmul` — each with autograd |
+| **Modules** | `Module`, `Linear`, `Sequential`, `ReLU`, `Softmax`, `Conv2d` |
 | **Optimizers** | `SGD` (with momentum), `Momentum`, `Adam` |
 | **Losses** | MSE, cross-entropy, binary cross-entropy |
 | **Functional transforms** | `grad`, `vmap`, `jit` — first-class and composable |
 | **Custom ops** | `@op_def` decorator — no C++ boilerplate |
 | **Save / load** | Versioned JSON graph + content-addressed (FNV-1a) tensor blob store; optimizer checkpoint round-trip |
-| **Tests** | Numerical gradient check for every op; e2e regression & XOR training |
+| **Tests** | Numerical gradient check for every op (including `conv2d` & `softmax`); e2e regression & XOR training |
 
 > **v0.2 (planned):** CUDA backend via unified `Device` + `Stream` abstraction,
-> NCCL-based distributed training, Conv2d, flatbuffer-based serialization.
+> NCCL-based distributed training, flatbuffer-based serialization.
 
 ---
 
@@ -452,12 +454,37 @@ python -m pytest tests/python tests/e2e -v
 
 ---
 
+## ⚖️ Library Scope, Positives & Negatives
+
+### Library Level & Target Scope
+MicroGrad is designed as a **production-grade micro-framework**. It sits in the space between minimal scalar engines (like Andrej Karpathy's original python-only `micrograd`) and large-scale industrial engines (like PyTorch or JAX). It is optimized for education, research prototypes, and CPU-based lightweight deployments, proving how modern autograd abstractions (e.g. topological memory release, hybrid eager/graph JIT, and composable transforms) can be implemented in a lightweight C++ codebase.
+
+### 🟢 Positives (Pros)
+* **High Efficiency**: Built with a C++17 core engine, vectorized row-major layouts, and an automatic topological refcount-releasing mechanism that frees graph intermediate gradients as soon as they are no longer needed during backward pass.
+* **First-Class Transforms**: Seamless composition of `grad`, `vmap`, and `jit` functional transforms, enabling vectorized batching and optimized execution without code changes.
+* **Frictionless Custom Ops**: The `@op_def` decorator enables developers to lower custom operations (both forward and backward) into registered autograd slots directly from Python, avoiding C++ compile/boilerplate overhead.
+* **Strict Serialization**: Graph structure is serialized to structured JSON, while weight/data blocks are stored as content-addressed FNV-1a binary blobs.
+
+### 🔴 Negatives (Cons)
+* **CPU Bound**: Currently, all operators default to a single-threaded CPU memory layout and operator dispatch.
+* **Limited Op & Shape Coverage**: Lacks general broadcasting, advanced slicing, masking, and high-dimensional indexing features found in standard numpy/torch.
+* **Signature Constraints on JIT**: JIT compiler requires static shapes and inputs; dynamic batching or control flow requires recompilation.
+
+---
+
+## 🔧 Engine Stability & Quick Fixes
+
+During the development and testing of MicroGrad's autograd engine, several critical bugs were resolved to ensure full end-to-end regression stability and prevent state contamination.
+
+See [Engine Stability & Quick Fixes](docs/stability_and_fixes.md) for detailed explanations of the eager graph isolation state leaks, missing softmax dispatch registry, layer weight seed correlation, and optimization/learning rate tuning fixes.
+
+---
+
 ## 🗺️ Roadmap
 
-- [x] v0.1 — CPU core, autograd, modules, optimizers, losses, transforms,
-      custom ops, save/load (current)
+- [x] v0.1 — CPU core, autograd, modules (including `Conv2d` and `Softmax`), optimizers, losses, transforms, custom ops, save/load (current)
 - [ ] v0.2 — CUDA backend via `Device` + `Stream` abstraction
-- [ ] v0.2 — `Conv2d`, `MaxPool2d`
+- [ ] v0.2 — `MaxPool2d`
 - [ ] v0.2 — flatbuffer-based serialization schema
 - [ ] v0.3 — NCCL distributed (Mesh, ShardSpec, `pmap`)
 - [ ] v0.3 — higher-order autograd (grad of grad)

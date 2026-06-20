@@ -1,5 +1,6 @@
 #include "micrograd/loss.hpp"
 #include "micrograd/op_registry.hpp"
+#include "micrograd/softmax.hpp"
 #include <cmath>
 
 namespace micrograd {
@@ -15,7 +16,7 @@ Tensor mse_loss(const Tensor& pred, const Tensor& target) {
 Tensor cross_entropy_loss(const Tensor& logits, const Tensor& target) {
     // Simplified: -log(softmax(logits)[target_class]). v0.1 expects target
     // shape == logits shape (one-hot).
-    Tensor sm = Softmax(-1).forward(logits);
+    Tensor sm = run_op("softmax", {logits})[0];
     Tensor eps = Tensor::full(sm.shape(), 1e-12f, sm.dtype(), sm.device());
     Tensor sm_safe = run_op("add", {sm, eps})[0];
     Tensor log_sm = run_op("log", {sm_safe})[0];

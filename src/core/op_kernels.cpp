@@ -1,10 +1,10 @@
 // All CPU op registrations in one place.
 #include "micrograd/op_registry.hpp"
 #include "micrograd/tensor.hpp"
-#include "binary_kernels.hpp"
-#include "unary_kernels.hpp"
-#include "reduce_kernels.hpp"
-#include "matmul_kernels.hpp"
+#include "kernels/cpu/binary_kernels.hpp"
+#include "kernels/cpu/unary_kernels.hpp"
+#include "kernels/cpu/reduce_kernels.hpp"
+#include "kernels/cpu/matmul_kernels.hpp"
 #include <cmath>
 #include <stdexcept>
 #include <numeric>
@@ -17,6 +17,21 @@ namespace {
 float* fdata(Tensor& t) { return static_cast<float*>(t.data_ptr()); }
 const float* fdata(const Tensor& t) { return static_cast<const float*>(t.data_ptr()); }
 
+// Helper: run a binary op on two tensors, supporting broadcasting if shapes differ.
+template <typename Op>
+void run_binary_bwd_op(const Tensor& a, const Tensor& b, Tensor& c, Op op) {
+    if (a.shape() == b.shape()) {
+        int64_t n = a.numel();
+        const float* ap = fdata(const_cast<Tensor&>(a));
+        const float* bp = fdata(const_cast<Tensor&>(b));
+        float* cp = fdata(c);
+        for (int64_t i = 0; i < n; ++i) cp[i] = op(ap[i], bp[i]);
+    } else {
+        cpu_binary_broadcast(fdata(const_cast<Tensor&>(a)), fdata(const_cast<Tensor&>(b)), fdata(c),
+                             a.shape().dims, b.shape().dims, c.shape().dims, op);
+    }
+}
+
 // Helper: register a binary elementwise op with broadcasting.
 void register_binary(const std::string& name, DType dt,
                      float (*scalar)(float, float),
@@ -25,7 +40,7 @@ void register_binary(const std::string& name, DType dt,
     op.name = name;
     op.dtype = dt;
     op.device = Device::cpu();
-    op.forward = [scalar, vec](const TensorVec& in) -> TensorVec {
+    op.forward = [name, scalar, vec](const TensorVec& in) -> TensorVec {
         if (in.size() != 2) throw std::runtime_error(name + ": expected 2 inputs");
         const auto& a = in[0];
         const auto& b = in[1];
@@ -122,8 +137,8 @@ void register_sub() {
     op.backward = [](const TensorVec&, const TensorVec& output_grads,
                      const TensorVec& inputs, TensorVec& input_grads) {
         reduce_to_input_shape(output_grads[0], inputs[0].shape(), input_grads[0]);
-        Tensor neg = Tensor::empty(input_grads[1].shape(), DType::F32, inputs[0].device());
-        cpu_neg(fdata(output_grads[0]), fdata(neg), output_grads[0].numel());
+        Tensor neg = Tensor::empty(output_grads[0].shape(), DType::F32, inputs[0].device());
+        cpu_neg(fdata(const_cast<Tensor&>(output_grads[0])), fdata(neg), output_grads[0].numel());
         reduce_to_input_shape(neg, inputs[1].shape(), input_grads[1]);
     };
     OpRegistry::instance().register_op("sub", DType::F32, std::move(op));
@@ -149,12 +164,10 @@ void register_mul() {
                      const TensorVec& inputs, TensorVec& input_grads) {
         // d/da = b * og, d/db = a * og
         Tensor g_a = Tensor::empty(output_grads[0].shape(), DType::F32, output_grads[0].device());
-        cpu_mul(fdata(const_cast<Tensor&>(inputs[1])), fdata(const_cast<Tensor&>(output_grads[0])),
-                fdata(g_a), inputs[1].numel());
+        run_binary_bwd_op(inputs[1], output_grads[0], g_a, [](float x, float y) { return x * y; });
         reduce_to_input_shape(g_a, inputs[0].shape(), input_grads[0]);
         Tensor g_b = Tensor::empty(output_grads[0].shape(), DType::F32, output_grads[0].device());
-        cpu_mul(fdata(const_cast<Tensor&>(inputs[0])), fdata(const_cast<Tensor&>(output_grads[0])),
-                fdata(g_b), inputs[0].numel());
+        run_binary_bwd_op(inputs[0], output_grads[0], g_b, [](float x, float y) { return x * y; });
         reduce_to_input_shape(g_b, inputs[1].shape(), input_grads[1]);
     };
     OpRegistry::instance().register_op("mul", DType::F32, std::move(op));
@@ -179,20 +192,16 @@ void register_div() {
     op.backward = [](const TensorVec&, const TensorVec& output_grads,
                      const TensorVec& inputs, TensorVec& input_grads) {
         // d/da = og / b; d/db = -og * a / b^2
-        int64_t n = output_grads[0].numel();
-        Tensor g_a(output_grads[0].shape(), DType::F32, output_grads[0].device());
-        cpu_div(fdata(const_cast<Tensor&>(output_grads[0])),
-                fdata(const_cast<Tensor&>(inputs[1])), fdata(g_a), n);
+        Tensor g_a = Tensor::empty(output_grads[0].shape(), DType::F32, output_grads[0].device());
+        run_binary_bwd_op(output_grads[0], inputs[1], g_a, [](float x, float y) { return x / y; });
         reduce_to_input_shape(g_a, inputs[0].shape(), input_grads[0]);
-        Tensor g_b(output_grads[0].shape(), DType::F32, output_grads[0].device());
-        Tensor tmp1(output_grads[0].shape(), DType::F32, output_grads[0].device());
-        Tensor tmp2(output_grads[0].shape(), DType::F32, output_grads[0].device());
-        cpu_mul(fdata(const_cast<Tensor&>(output_grads[0])),
-                fdata(const_cast<Tensor&>(inputs[0])), fdata(tmp1), n);
-        cpu_mul(fdata(const_cast<Tensor&>(inputs[1])),
-                fdata(const_cast<Tensor&>(inputs[1])), fdata(tmp2), n);
-        cpu_div(fdata(tmp1), fdata(tmp2), fdata(g_b), n);
-        Tensor neg_gb(g_b.shape(), DType::F32, g_b.device());
+        Tensor tmp1 = Tensor::empty(output_grads[0].shape(), DType::F32, output_grads[0].device());
+        run_binary_bwd_op(output_grads[0], inputs[0], tmp1, [](float x, float y) { return x * y; });
+        Tensor tmp2 = Tensor::empty(output_grads[0].shape(), DType::F32, output_grads[0].device());
+        run_binary_bwd_op(inputs[1], inputs[1], tmp2, [](float x, float y) { return x * y; });
+        Tensor g_b = Tensor::empty(output_grads[0].shape(), DType::F32, output_grads[0].device());
+        run_binary_bwd_op(tmp1, tmp2, g_b, [](float x, float y) { return x / y; });
+        Tensor neg_gb = Tensor::empty(g_b.shape(), DType::F32, g_b.device());
         cpu_neg(fdata(g_b), fdata(neg_gb), g_b.numel());
         reduce_to_input_shape(neg_gb, inputs[1].shape(), input_grads[1]);
     };
@@ -217,32 +226,32 @@ void register_pow() {
     };
     op.backward = [](const TensorVec&, const TensorVec& output_grads,
                      const TensorVec& inputs, TensorVec& input_grads) {
-        int64_t n = output_grads[0].numel();
         // d/da = b * a^(b-1) * og
-        Tensor g_a(output_grads[0].shape(), DType::F32, output_grads[0].device());
-        Tensor b_minus_one(inputs[1].shape(), DType::F32, inputs[1].device());
-        // We compute b - 1 using a tmp tensor.
+        Tensor b_minus_one = Tensor::empty(inputs[1].shape(), DType::F32, inputs[1].device());
         Tensor ones = Tensor::ones(inputs[1].shape(), DType::F32, inputs[1].device());
-        cpu_sub(fdata(const_cast<Tensor&>(inputs[1])), fdata(ones), fdata(b_minus_one), inputs[1].numel());
-        Tensor a_pow(output_grads[0].shape(), DType::F32, output_grads[0].device());
-        cpu_pow(fdata(const_cast<Tensor&>(inputs[0])), fdata(b_minus_one), fdata(a_pow), n);
-        cpu_mul(fdata(a_pow), fdata(const_cast<Tensor&>(inputs[1])), fdata(g_a), n);
-        cpu_mul(fdata(g_a), fdata(const_cast<Tensor&>(output_grads[0])), fdata(g_a), n);
+        run_binary_bwd_op(inputs[1], ones, b_minus_one, [](float x, float y) { return x - y; });
+        Tensor a_pow = Tensor::empty(output_grads[0].shape(), DType::F32, output_grads[0].device());
+        run_binary_bwd_op(inputs[0], b_minus_one, a_pow, [](float x, float y) { return std::pow(x, y); });
+        Tensor tmp_ga = Tensor::empty(output_grads[0].shape(), DType::F32, output_grads[0].device());
+        run_binary_bwd_op(a_pow, inputs[1], tmp_ga, [](float x, float y) { return x * y; });
+        Tensor g_a = Tensor::empty(output_grads[0].shape(), DType::F32, output_grads[0].device());
+        run_binary_bwd_op(tmp_ga, output_grads[0], g_a, [](float x, float y) { return x * y; });
         reduce_to_input_shape(g_a, inputs[0].shape(), input_grads[0]);
+
         // d/db = a^b * log(a) * og
-        Tensor g_b(output_grads[0].shape(), DType::F32, output_grads[0].device());
-        Tensor ab(n == 0 ? Shape{0} : inputs[0].shape(), DType::F32, inputs[0].device());
-        Tensor a_safe(inputs[0].shape(), DType::F32, inputs[0].device());
-        // Clamp a to >0 for log.
+        Tensor a_safe = Tensor::empty(inputs[0].shape(), DType::F32, inputs[0].device());
         int64_t na = inputs[0].numel();
         const float* ap = fdata(const_cast<Tensor&>(inputs[0]));
         float* a_safe_p = fdata(a_safe);
         for (int64_t i = 0; i < na; ++i) a_safe_p[i] = std::max(ap[i], 1e-12f);
-        cpu_pow(fdata(a_safe), fdata(const_cast<Tensor&>(inputs[1])), fdata(ab), n);
-        Tensor log_a(inputs[0].shape(), DType::F32, inputs[0].device());
+        Tensor ab = Tensor::empty(output_grads[0].shape(), DType::F32, output_grads[0].device());
+        run_binary_bwd_op(a_safe, inputs[1], ab, [](float x, float y) { return std::pow(x, y); });
+        Tensor log_a = Tensor::empty(inputs[0].shape(), DType::F32, inputs[0].device());
         cpu_log(fdata(a_safe), fdata(log_a), na);
-        cpu_mul(fdata(ab), fdata(log_a), fdata(g_b), n);
-        cpu_mul(fdata(g_b), fdata(const_cast<Tensor&>(output_grads[0])), fdata(g_b), n);
+        Tensor ab_log_a = Tensor::empty(output_grads[0].shape(), DType::F32, output_grads[0].device());
+        run_binary_bwd_op(ab, log_a, ab_log_a, [](float x, float y) { return x * y; });
+        Tensor g_b = Tensor::empty(output_grads[0].shape(), DType::F32, output_grads[0].device());
+        run_binary_bwd_op(ab_log_a, output_grads[0], g_b, [](float x, float y) { return x * y; });
         reduce_to_input_shape(g_b, inputs[1].shape(), input_grads[1]);
     };
     OpRegistry::instance().register_op("pow", DType::F32, std::move(op));
@@ -347,6 +356,193 @@ void register_mean() {
     OpRegistry::instance().register_op("mean", DType::F32, std::move(op));
 }
 
+void register_softmax() {
+    Op op; op.name = "softmax"; op.dtype = DType::F32; op.device = Device::cpu();
+    op.forward = [](const TensorVec& in) -> TensorVec {
+        const auto& a = in[0];
+        int rank = static_cast<int>(a.shape().rank());
+        if (rank < 1) throw std::runtime_error("softmax: need at least 1D");
+        // Softmax along the last axis.
+        int64_t C = a.shape().dims[rank - 1];  // number of classes
+        int64_t rows = a.numel() / C;
+        const float* ap = fdata(const_cast<Tensor&>(a));
+        Tensor y = Tensor::empty(a.shape(), a.dtype(), a.device());
+        float* yp = fdata(y);
+        for (int64_t r = 0; r < rows; ++r) {
+            const float* row_in = ap + r * C;
+            float* row_out = yp + r * C;
+            // Numerically-stable softmax: subtract max first.
+            float mx = row_in[0];
+            for (int64_t c = 1; c < C; ++c) if (row_in[c] > mx) mx = row_in[c];
+            double s = 0.0;
+            for (int64_t c = 0; c < C; ++c) {
+                row_out[c] = std::exp(row_in[c] - mx);
+                s += row_out[c];
+            }
+            for (int64_t c = 0; c < C; ++c) row_out[c] /= static_cast<float>(s);
+        }
+        return {y};
+    };
+    op.backward = [](const TensorVec& outputs, const TensorVec& output_grads,
+                     const TensorVec& /*inputs*/, TensorVec& input_grads) {
+        // softmax backward:  dx_i = y_i * (dy_i - sum_j(dy_j * y_j))
+        const Tensor& y = outputs[0];
+        const Tensor& og = output_grads[0];
+        int rank = static_cast<int>(y.shape().rank());
+        int64_t C = y.shape().dims[rank - 1];
+        int64_t rows = y.numel() / C;
+        const float* yp = fdata(const_cast<Tensor&>(y));
+        const float* ogp = fdata(const_cast<Tensor&>(og));
+        float* gp = fdata(input_grads[0]);
+        for (int64_t r = 0; r < rows; ++r) {
+            const float* yr = yp + r * C;
+            const float* ogr = ogp + r * C;
+            float* gr = gp + r * C;
+            // dot = sum_j (og_j * y_j)
+            double dot = 0.0;
+            for (int64_t c = 0; c < C; ++c) dot += ogr[c] * yr[c];
+            for (int64_t c = 0; c < C; ++c) {
+                gr[c] += yr[c] * (ogr[c] - static_cast<float>(dot));
+            }
+        }
+    };
+    OpRegistry::instance().register_op("softmax", DType::F32, std::move(op));
+}
+
+void register_conv2d() {
+    Op op; op.name = "conv2d"; op.dtype = DType::F32; op.device = Device::cpu();
+    op.forward = [](const TensorVec& in) -> TensorVec {
+        const auto& x = in[0];
+        const auto& w = in[1];
+        const auto& bias = in[2];
+        const auto& stride_t = in[3];
+        const auto& padding_t = in[4];
+        
+        if (x.shape().rank() != 4) throw std::runtime_error("conv2d: x must be 4D (N, C, H, W)");
+        if (w.shape().rank() != 4) throw std::runtime_error("conv2d: weight must be 4D (C_out, C_in, kH, kW)");
+        
+        int64_t N = x.shape().dims[0];
+        int64_t C_in = x.shape().dims[1];
+        int64_t H = x.shape().dims[2];
+        int64_t W = x.shape().dims[3];
+        
+        int64_t C_out = w.shape().dims[0];
+        int64_t C_in_w = w.shape().dims[1];
+        int64_t kH = w.shape().dims[2];
+        int64_t kW = w.shape().dims[3];
+        
+        if (C_in != C_in_w) throw std::runtime_error("conv2d: weight channel mismatch");
+        
+        int stride = static_cast<int>(*fdata(const_cast<Tensor&>(stride_t)));
+        int padding = static_cast<int>(*fdata(const_cast<Tensor&>(padding_t)));
+        
+        int64_t H_out = (H - kH + 2 * padding) / stride + 1;
+        int64_t W_out = (W - kW + 2 * padding) / stride + 1;
+        
+        if (H_out <= 0 || W_out <= 0) throw std::runtime_error("conv2d: invalid output dimensions");
+        
+        Tensor out = Tensor::empty(Shape({N, C_out, H_out, W_out}), x.dtype(), x.device());
+        
+        const float* xp = fdata(const_cast<Tensor&>(x));
+        const float* wp = fdata(const_cast<Tensor&>(w));
+        const float* bp = fdata(const_cast<Tensor&>(bias));
+        float* op_data = fdata(out);
+        
+        std::memset(op_data, 0, out.numel() * sizeof(float));
+        
+        for (int64_t n = 0; n < N; ++n) {
+            for (int64_t co = 0; co < C_out; ++co) {
+                float b_val = bp[co];
+                for (int64_t h_out = 0; h_out < H_out; ++h_out) {
+                    for (int64_t w_out = 0; w_out < W_out; ++w_out) {
+                        float sum = b_val;
+                        for (int64_t ci = 0; ci < C_in; ++ci) {
+                            for (int64_t kh = 0; kh < kH; ++kh) {
+                                int64_t h_in = h_out * stride - padding + kh;
+                                if (h_in < 0 || h_in >= H) continue;
+                                for (int64_t kw = 0; kw < kW; ++kw) {
+                                    int64_t w_in = w_out * stride - padding + kw;
+                                    if (w_in < 0 || w_in >= W) continue;
+                                    
+                                    int64_t x_idx = ((n * C_in + ci) * H + h_in) * W + w_in;
+                                    int64_t w_idx = ((co * C_in + ci) * kH + kh) * kW + kw;
+                                    sum += xp[x_idx] * wp[w_idx];
+                                }
+                            }
+                        }
+                        int64_t out_idx = ((n * C_out + co) * H_out + h_out) * W_out + w_out;
+                        op_data[out_idx] = sum;
+                    }
+                }
+            }
+        }
+        return {out};
+    };
+    op.backward = [](const TensorVec& outputs, const TensorVec& output_grads,
+                     const TensorVec& inputs, TensorVec& input_grads) {
+        const auto& x = inputs[0];
+        const auto& w = inputs[1];
+        const auto& stride_t = inputs[3];
+        const auto& padding_t = inputs[4];
+        
+        const auto& og = output_grads[0];
+        
+        int64_t N = x.shape().dims[0];
+        int64_t C_in = x.shape().dims[1];
+        int64_t H = x.shape().dims[2];
+        int64_t W = x.shape().dims[3];
+        
+        int64_t C_out = w.shape().dims[0];
+        int64_t kH = w.shape().dims[2];
+        int64_t kW = w.shape().dims[3];
+        
+        int stride = static_cast<int>(*fdata(const_cast<Tensor&>(stride_t)));
+        int padding = static_cast<int>(*fdata(const_cast<Tensor&>(padding_t)));
+        
+        int64_t H_out = og.shape().dims[2];
+        int64_t W_out = og.shape().dims[3];
+        
+        const float* xp = fdata(const_cast<Tensor&>(x));
+        const float* wp = fdata(const_cast<Tensor&>(w));
+        const float* ogp = fdata(const_cast<Tensor&>(og));
+        
+        float* dxp = fdata(input_grads[0]);
+        float* dwp = fdata(input_grads[1]);
+        float* dbiasp = fdata(input_grads[2]);
+        
+        for (int64_t n = 0; n < N; ++n) {
+            for (int64_t co = 0; co < C_out; ++co) {
+                for (int64_t h_out = 0; h_out < H_out; ++h_out) {
+                    for (int64_t w_out = 0; w_out < W_out; ++w_out) {
+                        int64_t og_idx = ((n * C_out + co) * H_out + h_out) * W_out + w_out;
+                        float og_val = ogp[og_idx];
+                        
+                        dbiasp[co] += og_val;
+                        
+                        for (int64_t ci = 0; ci < C_in; ++ci) {
+                            for (int64_t kh = 0; kh < kH; ++kh) {
+                                int64_t h_in = h_out * stride - padding + kh;
+                                if (h_in < 0 || h_in >= H) continue;
+                                for (int64_t kw = 0; kw < kW; ++kw) {
+                                    int64_t w_in = w_out * stride - padding + kw;
+                                    if (w_in < 0 || w_in >= W) continue;
+                                    
+                                    int64_t x_idx = ((n * C_in + ci) * H + h_in) * W + w_in;
+                                    int64_t w_idx = ((co * C_in + ci) * kH + kh) * kW + kw;
+                                    
+                                    dwp[w_idx] += og_val * xp[x_idx];
+                                    dxp[x_idx] += og_val * wp[w_idx];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    OpRegistry::instance().register_op("conv2d", DType::F32, std::move(op));
+}
+
 void register_matmul() {
     Op op; op.name = "matmul"; op.dtype = DType::F32; op.device = Device::cpu();
     op.forward = [](const TensorVec& in) -> TensorVec {
@@ -375,9 +571,11 @@ void register_matmul() {
                      fdata(const_cast<Tensor&>(b)),
                      fdata(input_grads[0]), M, N, K);
         // dB = A^T @ og
-        Tensor at(K, M, a.dtype(), a.device());
+        Tensor at = Tensor::empty(Shape({K, M}), a.dtype(), a.device());
+        float* atp = fdata(at);
+        const float* ap = fdata(a);
         for (int i = 0; i < M; ++i)
-            for (int k = 0; k < K; ++k) at.data_ptr<float>()[k * M + i] = a.data_ptr<float>()[i * K + k];
+            for (int k = 0; k < K; ++k) atp[k * M + i] = ap[i * K + k];
         cpu_matmul(fdata(at), fdata(const_cast<Tensor&>(output_grads[0])),
                    fdata(input_grads[1]), K, M, N);
     };
@@ -396,6 +594,8 @@ void init_cpu_ops() {
     register_unary_ops();
     register_sum();
     register_mean();
+    register_softmax();
+    register_conv2d();
     register_matmul();
 }
 
@@ -436,7 +636,7 @@ void reduce_to_input_shape(const Tensor& og, const Shape& target, Tensor& dst) {
             else c = coord[i];
             if (ti >= 0) dst_idx += c * dst_strides[ti];
         }
-        dst.data_ptr<float>()[dst_idx] += og.data_ptr<float>()[idx];
+        fdata(dst)[dst_idx] += fdata(og)[idx];
     }
 }
 

@@ -19,4 +19,6 @@ void register_function(py::module& m) {
     m.def("set_active_function", [](Function* f) { set_active_function(f); },
           py::arg("f"), "Set the active Function for autograd tracing. Pass None to clear.");
     m.def("active_function", &active_function, py::return_value_policy::reference);
+    m.def("set_grad_enabled", [](bool enabled) { Tracer::current().recording = enabled; });
+    m.def("is_grad_enabled", []() { return Tracer::current().recording; });
 }

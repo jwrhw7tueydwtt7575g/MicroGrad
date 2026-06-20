@@ -12,7 +12,6 @@ void set_active_function(Function* f) {
     Tracer& tr = Tracer::current();
     tr.function = f;
     tr.graph = f ? &f->graph() : nullptr;
-    tr.recording = (f != nullptr);
 }
 
 Function* active_function() { return g_active; }

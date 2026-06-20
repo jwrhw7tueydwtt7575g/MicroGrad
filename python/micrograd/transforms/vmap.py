@@ -69,7 +69,7 @@ def vmap(fn, in_axes=0, out_axes=0):
         for o in outputs:
             flat_out.extend(o)
         from .. import tensor as _t
-        out_shape = list(outputs[0])
+        out_shape = list(out.shape())
         out_shape.insert(axis, bs)
         return _t(flat_out, out_shape)
 

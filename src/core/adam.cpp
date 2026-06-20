@@ -1,4 +1,5 @@
 #include "micrograd/adam.hpp"
+#include <cmath>
 
 namespace micrograd {
 

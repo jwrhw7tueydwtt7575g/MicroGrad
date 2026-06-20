@@ -4,5 +4,6 @@
 
 namespace micrograd {
 struct IRNode;
+struct Graph;
 class Function;
 }

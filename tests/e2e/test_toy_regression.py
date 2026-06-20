@@ -10,11 +10,11 @@ def test_toy_regression():
         nn.ReLU(),
         nn.Linear(16, 1),
     )
-    opt = optim.Adam(model.parameters(), lr=1e-2)
+    opt = optim.Adam(model.parameters(), lr=3e-2)
     x, y = sin_curve(200)
     initial = None
     final = None
-    for step in range(200):
+    for step in range(500):
         opt.zero_grad()
         pred = model(x)
         loss = losses.mse(pred, y)

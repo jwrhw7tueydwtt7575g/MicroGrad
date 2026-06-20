@@ -27,6 +27,7 @@ add_library(micrograd_core STATIC
 )
 target_include_directories(micrograd_core PUBLIC
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
 )
 target_link_libraries(micrograd_core PUBLIC Threads::Threads)
 
@@ -45,5 +46,10 @@ if(MICROGRAD_BUILD_PYTHON)
     target_link_libraries(micrograd_python PUBLIC micrograd_core)
     set_target_properties(micrograd_python PROPERTIES
         OUTPUT_NAME "_C"
+    )
+    # Install the compiled module into the python package directory so it
+    # becomes importable as `micrograd._C` once installed.
+    install(TARGETS micrograd_python
+        LIBRARY DESTINATION ${SKBUILD_PROJECT_NAME}
     )
 endif()

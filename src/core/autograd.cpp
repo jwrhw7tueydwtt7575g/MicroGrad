@@ -13,8 +13,9 @@ void backward(Function& f, const Tensor& loss) {
     // Determine the output node: prefer g.output_id if set, else use the
     // loss tensor's producer.
     int output_id = g.output_id;
-    if (output_id < 0 && loss.producer()) {
-        output_id = loss.producer()->id;
+    auto loss_prod = loss.producer();
+    if (output_id < 0 && loss_prod.graph == &g && loss_prod.node_id >= 0) {
+        output_id = loss_prod.node_id;
     }
     if (output_id < 0) {
         // No graph; nothing to do.
@@ -53,6 +54,7 @@ void backward(Function& f, const Tensor& loss) {
         for (size_t i = 0; i < node.inputs.size(); ++i) {
             int p = node.inputs[i];
             if (p < 0) continue;
+            if (p >= n) continue;
             auto git = grad_for_node.find(p);
             if (git == grad_for_node.end()) {
                 grad_for_node.emplace(p, std::move(in_grads[i]));
@@ -60,7 +62,11 @@ void backward(Function& f, const Tensor& loss) {
                 auto& dst = git->second;
                 auto& src = in_grads[i];
                 if (dst.dtype() != src.dtype() || dst.shape() != src.shape()) {
-                    throw std::runtime_error("backward: grad shape/dtype mismatch");
+                    IRNode& pnode = g.node(p);
+                    throw std::runtime_error("backward: grad shape/dtype mismatch at node " +
+                                             std::to_string(p) + " (" + pnode.op_name +
+                                             "): dst shape " + dst.shape().to_string() +
+                                             ", src shape " + src.shape().to_string());
                 }
                 int64_t N = dst.numel();
                 float* dp = static_cast<float*>(dst.data_ptr());

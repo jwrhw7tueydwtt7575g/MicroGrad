@@ -16,7 +16,7 @@ using FunctionPtr = std::shared_ptr<Function>;
 class Function {
 public:
     Function();
-    explicit Function(Graph g);
+    explicit Function(const Graph& g);
 
     // Run the captured forward again. Used by grad/vmap/jit/pmap.
     // `bindings` is indexed by Graph::input_ids.

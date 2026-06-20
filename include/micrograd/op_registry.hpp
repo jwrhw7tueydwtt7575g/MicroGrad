@@ -32,4 +32,13 @@ private:
 TensorVec run_op(const std::string& name, const TensorVec& inputs,
                  const std::vector<uint8_t>& attr_bytes = {});
 
+// Pointer-input variant: avoids copying the Tensor objects so updates to
+// grad_/producer_ on the records are visible to the original Python-held
+// Tensors (whose addresses we pass via pointers). Use this from the
+// pybind11 bindings where the Tensor references cannot be copied without
+// breaking the aliasing.
+TensorVec run_op_ptrs(const std::string& name,
+                      const std::vector<const Tensor*>& inputs,
+                      const std::vector<uint8_t>& attr_bytes = {});
+
 }  // namespace micrograd

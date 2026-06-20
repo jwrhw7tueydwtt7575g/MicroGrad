@@ -17,7 +17,7 @@ def smooth_l1(pred, target):
             out.append(0.5 * x * x)
         else:
             out.append(x - 0.5)
-    return tensor(out, abs_diff.shape).mean()
+    return tensor(out, list(abs_diff.shape())).mean()
 
 
 # Use it as a loss for a tiny regression problem.

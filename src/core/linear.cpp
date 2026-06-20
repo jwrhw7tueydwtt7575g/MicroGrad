@@ -8,9 +8,10 @@ namespace micrograd {
 
 Linear::Linear(int in_features, int out_features, bool bias)
     : in_(in_features), out_(out_features), has_bias_(bias) {
-    // Kaiming-uniform init.
+    // Kaiming-uniform init with unique seed per layer.
+    static thread_local uint64_t seed_counter = 0;
     float bound = std::sqrt(1.0f / static_cast<float>(in_features));
-    std::mt19937 rng(42);
+    std::mt19937 rng(42 + seed_counter++);
     std::uniform_real_distribution<float> d(-bound, bound);
     // Store weight as (in, out) so y = x @ W + b is a plain matmul.
     weight_ = Tensor::empty(Shape({in_features, out_features}), DType::F32, Device::cpu());

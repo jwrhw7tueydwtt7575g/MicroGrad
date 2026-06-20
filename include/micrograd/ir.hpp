@@ -12,6 +12,9 @@
 
 namespace micrograd {
 
+class Function;     // forward decl; resolved in micrograd/function.hpp
+struct Graph;       // forward decl; defined below
+
 struct IRNode {
     int id = -1;                                              // dense index in Graph::nodes
     std::string op_name;                                      // "add", "matmul", ...
@@ -22,6 +25,12 @@ struct IRNode {
     std::vector<Tensor> cached_outputs;                       // forward outputs (kept for backward)
     std::vector<Tensor> cached_inputs;                        // forward inputs (kept for backward)
     std::vector<uint8_t> attrs;                               // op-specific
+
+    // Back-pointer to the owning Graph. Set by Graph::add_node(). Allows
+    // Tensor::producer() callers to navigate back to the Function that owns
+    // the graph (via Graph::owner), which is needed by py_backward when no
+    // active Function is set on the tracer.
+    Graph* graph = nullptr;
 
     // Backward closure bound at capture time. Signature matches BackwardFn but
     // also receives attrs. Internally the Graph calls this with the grad
@@ -35,6 +44,16 @@ struct Graph {
     std::vector<int> param_ids;                               // indices of leaf parameter nodes
     std::vector<int> input_ids;                               // placeholder ids (data inputs)
     int output_id = -1;                                       // IRNode id of the loss/output
+
+    // Owning Function (set when this graph is wrapped by a Function). Used
+    // by py_backward to dispatch backward() on the right Function when the
+    // user calls Tensor.backward() outside a `with Function():` block.
+    class Function* owner = nullptr;
+
+    // Strong reference to keep a heap-allocated Function alive when this
+    // graph was created ad-hoc by run_op (e.g. eager Python path that does
+    // not enter an explicit Function context). Holds the owner alive.
+    std::shared_ptr<class Function> owner_keepalive;
 
     // Allocate a fresh node id and a default-constructed IRNode.
     int add_node();

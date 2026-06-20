@@ -1,4 +1,4 @@
-from .. import _C
+from . import _C
 
 
 def mse(pred, target):

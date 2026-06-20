@@ -6,12 +6,17 @@
 #include <utility>
 #include <unordered_map>
 #include <algorithm>
+#include <string>
 
 namespace micrograd {
 
 Function::Function() = default;
 
-Function::Function(Graph g) : graph_(std::move(g)) {}
+Function::Function(const Graph& g) : graph_(g) {
+    // Claim ownership of the graph so callers can navigate from a leaf
+    // tensor's IRNode back to the Function that owns its graph.
+    graph_.owner = this;
+}
 
 Function::Scope Function::enter() {
     return Scope(this);
@@ -123,4 +128,13 @@ FunctionPtr Function::pmap() {
     return std::make_shared<Function>(graph_);
 }
 
+void Function::save(const std::string& path) const {
+    Serializer::save_function(*this, path);
+}
+
+FunctionPtr Function::load(const std::string& path) {
+    return Serializer::load_function(path);
+}
+
 }  // namespace micrograd
+

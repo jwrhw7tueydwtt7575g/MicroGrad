@@ -1,4 +1,5 @@
 #include "micrograd/tensor.hpp"
+#include "micrograd/ir.hpp"
 #include "micrograd/storage.hpp"
 #include "micrograd/stream.hpp"
 #include <sstream>
@@ -6,6 +7,19 @@
 #include <cstring>
 
 namespace micrograd {
+
+IRNode* Tensor::producer_node() const {
+    if (!producer_.graph) return nullptr;
+    if (producer_.node_id < 0) return nullptr;
+    if (producer_.node_id >= static_cast<int>(producer_.graph->nodes.size())) return nullptr;
+    return &producer_.graph->node(producer_.node_id);
+}
+
+Tensor::Tensor()
+    : shape_(Shape({0})),
+      dtype_(DType::F32),
+      device_(Device::cpu()),
+      requires_grad_(false) {}
 
 Tensor::Tensor(StorageHandle data, Shape shape, DType dtype, Device dev, bool requires_grad)
     : data_(std::move(data)),

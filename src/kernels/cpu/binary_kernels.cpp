@@ -1,6 +1,7 @@
 #include "binary_kernels.hpp"
 #include <cmath>
 #include <algorithm>
+#include <stdexcept>
 
 namespace micrograd {
 

@@ -1,4 +1,5 @@
 #include "micrograd/module.hpp"
+#include <cstring>
 #include <stdexcept>
 
 namespace micrograd {

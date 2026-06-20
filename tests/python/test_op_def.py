@@ -31,7 +31,7 @@ def test_custom_loss_runs():
                 out.append(0.5 * v * v)
             else:
                 out.append(v - 0.5)
-        return tensor(out, abs_diff.shape).mean()
+        return tensor(out, abs_diff.shape()).mean()
 
     from micrograd.data import sin_curve
     model = nn.Sequential(nn.Linear(1, 8), nn.ReLU(), nn.Linear(8, 1))
