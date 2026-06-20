@@ -50,6 +50,6 @@ if(MICROGRAD_BUILD_PYTHON)
     # Install the compiled module into the python package directory so it
     # becomes importable as `micrograd._C` once installed.
     install(TARGETS micrograd_python
-        LIBRARY DESTINATION ${SKBUILD_PROJECT_NAME}
+        LIBRARY DESTINATION micrograd
     )
 endif()
