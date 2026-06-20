@@ -4,10 +4,17 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "micrograd-cpp-engine"
-version = "0.1.0"
+version = "0.1.1"
 description = "A small autograd library with a C++ core and pybind11 Python bindings."
+readme = "README.md"
 requires-python = ">=3.9"
 dependencies = ["numpy>=1.20"]
+authors = [
+    {name = "Vivek Chaudhari"}
+]
+
+[project.urls]
+Homepage = "https://github.com/jwrhw7tueydwtt7575g/MicroGrad"
 
 [tool.scikit-build]
 wheel.packages = ["python/micrograd"]

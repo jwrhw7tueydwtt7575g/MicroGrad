@@ -11,7 +11,7 @@ from .train.loop import train
 
 __all__ = ["tensor", "no_grad", "enable_grad", "nn", "optim", "transforms",
            "losses", "op_def", "Function", "train"]
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # Register all built-in CPU ops at import time.
 _C.init_ops()
